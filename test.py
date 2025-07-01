@@ -1,36 +1,31 @@
-def validate_vault_approle_access(vault_addr: str, role_id: str, secret_id: str, test_secret_path: str):
+def validate_vault_access_with_helper(vault_helper: VaultHelper, secret_path: str):
     """
-    Validates that AppRole credentials can access a Vault secret.
+    Validates that the VaultHelper's client can access the given Vault secret path.
+    Does not return or log secret data — only verifies access.
 
-    :param vault_addr: Vault server URL
-    :param role_id: Vault AppRole role_id
-    :param secret_id: Vault AppRole secret_id
-    :param test_secret_path: Path to any readable secret to test access
+    :param vault_helper: An initialized VaultHelper instance with AppRole auth
+    :param secret_path: The full Vault path to check (e.g., 'nodalsuite/qa13/kv/rabbitmq/admin')
+    :raises Exception: If access fails
     """
-    LOG.info("Validating Vault AppRole access to: %s", test_secret_path)
+    LOG.info("Validating Vault access for path: %s", secret_path)
     try:
-        client = hvac.Client(url=vault_addr)
-        client.auth.approle.login(role_id=role_id, secret_id=secret_id)
-
-        if not client.is_authenticated():
-            LOG.error("AppRole authentication failed. Check role_id or secret_id.")
-            raise PermissionError("Vault AppRole authentication failed")
-
-        # Try accessing the test secret
-        client.secrets.kv.v2.read_secret_version(path=test_secret_path)
-        LOG.info("✅ Vault access validation successful.")
+        client = vault_helper.vault_client
+        # Attempt to read the secret (but don’t use or log it)
+        client.secrets.kv.v2.read_secret_version(path=secret_path)
+        LOG.info("✅ Vault access validation succeeded for path: %s", secret_path)
     except hvac.exceptions.Forbidden:
-        LOG.error("❌ Vault AppRole credentials are invalid or lack permission to access: %s", test_secret_path)
+        LOG.error("❌ Access denied for Vault path: %s", secret_path)
         raise
     except Exception as e:
-        LOG.error("❌ Unexpected error during Vault access validation: %s", str(e))
+        LOG.error("❌ Vault validation error: %s", str(e))
         raise
 
 
+vault = VaultHelper()
+vault.init(environment="qa13", vault_addr="https://vaultops.rtv.corp.nodalx.net")
 
-validate_vault_approle_access(
-    vault_addr='https://vaultops.rtv.corp.nodalx.net',
-    role_id=os.environ['VAULT_ROLE_ID'],
-    secret_id=os.environ['VAULT_SECRET_ID'],
-    test_secret_path='nodalsuite/qa13/kv/rabbitmq/admin'
+
+validate_vault_access_with_helper(
+    vault_helper=vault,
+    secret_path='nodalsuite/qa13/kv/rabbitmq/admin'
 )
