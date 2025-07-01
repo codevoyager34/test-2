@@ -1,30 +1,36 @@
-import time
-
-def wait_for_healthy_containers(machine_ip, ssh_key, timeout=1200, interval=10):
+def validate_vault_approle_access(vault_addr: str, role_id: str, secret_id: str, test_secret_path: str):
     """
-    Polls the health status of all running Docker containers on the given machine.
-    
-    :param machine_ip: IP address of the remote machine
-    :param ssh_key: SSH private key path
-    :param timeout: Maximum time to wait in seconds (default 20 minutes)
-    :param interval: Polling interval in seconds (default 10 seconds)
+    Validates that AppRole credentials can access a Vault secret.
+
+    :param vault_addr: Vault server URL
+    :param role_id: Vault AppRole role_id
+    :param secret_id: Vault AppRole secret_id
+    :param test_secret_path: Path to any readable secret to test access
     """
-    start_time = time.time()
-    while True:
-        health_cmd = "docker container ls --format '{{.Names}} {{.Status}}'"
-        result = ParamikoWrapper.ssh_cmd(machine_ip, health_cmd, ssh_key, 'duser', 22)['stdout']
-        if isinstance(result, bytes):
-            result = result.decode()
-        LOGGER.info("Docker health check on %s:\n%s", machine_ip, result.strip())
+    LOG.info("Validating Vault AppRole access to: %s", test_secret_path)
+    try:
+        client = hvac.Client(url=vault_addr)
+        client.auth.approle.login(role_id=role_id, secret_id=secret_id)
 
-        lines = result.strip().splitlines()
-        healthy_lines = [line for line in lines if 'zabbix-docker-monitor' not in line.lower()]
-        if healthy_lines and all('(healthy)' in line.lower() for line in healthy_lines):
-            LOGGER.info("✅ All containers healthy on %s", machine_ip)
-            break
+        if not client.is_authenticated():
+            LOG.error("AppRole authentication failed. Check role_id or secret_id.")
+            raise PermissionError("Vault AppRole authentication failed")
 
-        if time.time() - start_time > timeout:
-            LOGGER.warning("⏱️ Timeout waiting for healthy containers on %s", machine_ip)
-            break
+        # Try accessing the test secret
+        client.secrets.kv.v2.read_secret_version(path=test_secret_path)
+        LOG.info("✅ Vault access validation successful.")
+    except hvac.exceptions.Forbidden:
+        LOG.error("❌ Vault AppRole credentials are invalid or lack permission to access: %s", test_secret_path)
+        raise
+    except Exception as e:
+        LOG.error("❌ Unexpected error during Vault access validation: %s", str(e))
+        raise
 
-        time.sleep(interval)
+
+
+validate_vault_approle_access(
+    vault_addr='https://vaultops.rtv.corp.nodalx.net',
+    role_id=os.environ['VAULT_ROLE_ID'],
+    secret_id=os.environ['VAULT_SECRET_ID'],
+    test_secret_path='nodalsuite/qa13/kv/rabbitmq/admin'
+)
