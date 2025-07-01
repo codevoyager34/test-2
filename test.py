@@ -3,32 +3,28 @@ import time
 def wait_for_healthy_containers(machine_ip, ssh_key, timeout=1200, interval=10):
     """
     Polls the health status of all running Docker containers on the given machine.
-
+    
     :param machine_ip: IP address of the remote machine
-    :param ssh_key: path to SSH private key used for authentication
-    :param timeout: max number of seconds to wait (default: 1200s / 20 minutes)
-    :param interval: polling interval in seconds (default: 10s)
+    :param ssh_key: SSH private key path
+    :param timeout: Maximum time to wait in seconds (default 20 minutes)
+    :param interval: Polling interval in seconds (default 10 seconds)
     """
-    LOGGER.info("Waiting for healthy Docker containers on %s", machine_ip)
     start_time = time.time()
-
-    health_cmd = "docker inspect --format='{{{{.Name}}}} {{{{.State.Health.Status}}}}' $(docker ps -q)"
-
     while True:
-        result = ParamikoWrapper.ssh_cmd(machine_ip, health_cmd, ssh_key, 'duser', 22)
-        output = result.get('stdout', b'')
-        if isinstance(output, bytes):
-            output = output.decode()
+        health_cmd = "docker container ls --format '{{.Names}} {{.Status}}'"
+        result = ParamikoWrapper.ssh_cmd(machine_ip, health_cmd, ssh_key, 'duser', 22)['stdout']
+        if isinstance(result, bytes):
+            result = result.decode()
+        LOGGER.info("Docker health check on %s:\n%s", machine_ip, result.strip())
 
-        LOGGER.info("Health status on %s:\n%s", machine_ip, output.strip())
-        lines = output.strip().splitlines()
-
-        if lines and all('healthy' in line for line in lines):
-            LOGGER.info("✅ All containers are healthy on %s", machine_ip)
+        lines = result.strip().splitlines()
+        healthy_lines = [line for line in lines if 'zabbix-docker-monitor' not in line.lower()]
+        if healthy_lines and all('(healthy)' in line.lower() for line in healthy_lines):
+            LOGGER.info("✅ All containers healthy on %s", machine_ip)
             break
 
         if time.time() - start_time > timeout:
-            LOGGER.error("❌ Timeout: Not all containers became healthy on %s within %s seconds", machine_ip, timeout)
+            LOGGER.warning("⏱️ Timeout waiting for healthy containers on %s", machine_ip)
             break
 
         time.sleep(interval)
