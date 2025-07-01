@@ -53,3 +53,55 @@ validate_vault_access_for_env(
     mount_point="nodalsuite/qa13/kv",
     secret_path="rabbitmq/admin"
 )
+
+
+
+import hvac
+import logging
+
+LOG = logging.getLogger("vault_access_check")
+LOG.setLevel(logging.INFO)
+if not LOG.handlers:
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+    handler.setFormatter(formatter)
+    LOG.addHandler(handler)
+
+def validate_vault_approle_access(vault_addr: str, role_id: str, secret_id: str, mount_point: str, secret_path: str):
+    """
+    Validates Vault access using AppRole credentials.
+
+    :param vault_addr: Vault server URL
+    :param role_id: Vault AppRole role_id
+    :param secret_id: Vault AppRole secret_id
+    :param mount_point: KV engine mount point (e.g., 'nodalsuite/qa13/kv')
+    :param secret_path: Path inside KV engine (e.g., 'rabbitmq/admin')
+    :raises: Exception if login or read fails
+    """
+    LOG.info("Connecting to Vault at %s", vault_addr)
+    try:
+        # Create and login Vault client
+        client = hvac.Client(url=vault_addr)
+        client.auth.approle.login(role_id=role_id, secret_id=secret_id)
+
+        if not client.is_authenticated():
+            LOG.error("❌ AppRole authentication failed.")
+            raise PermissionError("Vault AppRole authentication failed.")
+
+        LOG.info("✅ Authenticated successfully. Checking secret path: %s/%s", mount_point, secret_path)
+
+        # Try to access secret — do not print it
+        client.secrets.kv.v2.read_secret_version(
+            mount_point=mount_point,
+            path=secret_path
+        )
+
+        LOG.info("✅ Access confirmed to: %s/%s", mount_point, secret_path)
+
+    except hvac.exceptions.Forbidden:
+        LOG.error("❌ Access denied to: %s/%s", mount_point, secret_path)
+        raise
+
+    except Exception as e:
+        LOG.error("❌ Unexpected Vault error: %s", str(e))
+        raise
